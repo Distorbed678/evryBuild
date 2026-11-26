@@ -1,0 +1,30 @@
+#!/bin/sh
+# evryBuild AppImage launcher. Runs the Windows planner with the Wine build bundled in this AppImage.
+#
+# The AppImage is a read-only mount, so everything that changes lives outside it:
+#   Wine prefix  $EVRYBUILD_WINEPREFIX, default ${XDG_DATA_HOME:-~/.local/share}/evryBuild/appimage-prefix
+#   Builds, settings and LocalExile.json  the prefix's Documents folder, evryBuild/ in it. Wine links Documents to
+#                your own Documents folder (~/Documents/evryBuild) when you have one.
+# Set WINEDEBUG to see Wine's messages; it is -all by default.
+set -eu
+
+HERE=$(dirname "$(readlink -f "$0")")
+WINE_HOME="$HERE/usr/lib/evryBuild/wine"
+APP="$HERE/usr/lib/evryBuild/app"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/evryBuild"
+
+export WINEPREFIX="${EVRYBUILD_WINEPREFIX:-$DATA_HOME/appimage-prefix}"
+# No Mono or Gecko install prompts (evryBuild needs neither), and no Wine menu entries or file associations.
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-mscoree,mshtml=;winemenubuilder.exe=d}"
+export WINEDEBUG="${WINEDEBUG:--all}"
+# Use this AppImage's Wine even when another Wine is installed or configured.
+export WINELOADER="$WINE_HOME/bin/wine"
+export WINESERVER="$WINE_HOME/bin/wineserver"
+unset WINEDLLPATH WINEARCH
+export PATH="$WINE_HOME/bin:$PATH"
+# Tells evryBuild that its folder is read-only and that updates mean downloading a new AppImage.
+export EVRYBUILD_APPIMAGE="${APPIMAGE:-$HERE}"
+
+mkdir -p "$(dirname "$WINEPREFIX")"
+cd "$APP"
+exec "$WINELOADER" evryBuild.exe

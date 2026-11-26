@@ -1,8 +1,13 @@
 """Focused release-packaging checks; no real game files or other installations are used."""
 import hashlib
 import importlib.util
+import io
 import json
+import os
 from pathlib import Path
+import re
+import shutil
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -11,6 +16,12 @@ import xml.etree.ElementTree as ET
 spec = importlib.util.spec_from_file_location("evrybuild_package", Path(__file__).with_name("package-evrybuild.py"))
 package_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(package_module)
+appimage_spec = importlib.util.spec_from_file_location("evrybuild_appimage", Path(__file__).with_name("package-appimage.py"))
+appimage_module = importlib.util.module_from_spec(appimage_spec)
+appimage_spec.loader.exec_module(appimage_module)
+# The AppImage reuses the portable packager; share its module so a patch applies to both.
+appimage_module.package_module = package_module
+appimage_module.PackageError = package_module.PackageError
 
 
 class PackageTests(unittest.TestCase):
@@ -337,6 +348,125 @@ class ReleasePackageTests(PackageTests):
         (self.source / "VERSION").write_text("1.2.0\n")
         with self.assertRaisesRegex(package_module.PackageError, "clean commit"):
             package_module.package(self.source, self.target, package_module.parse_release("evrybuild-v1.2.0", None))
+
+
+def wine_archive(path, members, root=appimage_module.WINE_ROOT):
+    """A small stand-in for the Wine build: {name: bytes, or ('link', target)}."""
+    with tarfile.open(path, "w:xz") as tar:
+        for name, content in members.items():
+            info = tarfile.TarInfo(f"{root}/{name}")
+            if isinstance(content, tuple):
+                info.type, info.linkname = tarfile.SYMTYPE, content[1]
+                tar.addfile(info)
+            else:
+                info.size, info.mode = len(content), 0o755 if name.startswith("bin/") else 0o644
+                tar.addfile(info, io.BytesIO(content))
+
+
+WINE_FILES = {"bin/wine": b"loader", "bin/wineserver": b"server", "bin/winegcc": b"compiler", "bin/winepath": b"paths",
+              "lib/wine/x86_64-windows/kernel32.dll": b"pe", "lib/wine/x86_64-windows/libkernel32.a": b"import lib",
+              "lib/wine/x86_64-unix/ntdll.so": b"unix", "lib/wine/i386-windows/kernel32.dll": b"32-bit pe",
+              "include/wine/windows/windows.h": b"header", "share/man/man1/wine.1": b"manual",
+              "share/applications/wine.desktop": b"desktop entry", "share/wine/wine.inf": b"inf",
+              "share/wine/fonts/tahoma.ttf": b"font", "lib/wine/x86_64-unix/libwine.so": ("link", "ntdll.so")}
+
+
+class AppImageTests(unittest.TestCase):
+    """The AppImage's layout, launcher and pinned downloads. appimagetool and the network are not used."""
+    # The same synthetic source checkout as the portable package tests.
+    setUp, tearDown, write_manifest = PackageTests.setUp, PackageTests.tearDown, PackageTests.write_manifest
+
+    def test_pins_are_exact_https_files_with_sha256(self):
+        for pin in (appimage_module.WINE, appimage_module.APPIMAGETOOL, appimage_module.RUNTIME):
+            self.assertTrue(pin.url.startswith("https://github.com/") and "/releases/download/" in pin.url, pin.url)
+            self.assertNotIn("continuous", pin.url)
+            self.assertRegex(pin.sha256, r"^[0-9a-f]{64}$")
+        self.assertEqual(appimage_module.WINE.name, appimage_module.WINE_ROOT + ".tar.xz")
+        notice = (appimage_module.FILES / "notices/NOTICE-Wine.md").read_text(encoding="utf-8")
+        self.assertIn(appimage_module.WINE.name, notice)
+        version = re.match(r"wine-([0-9.]+)-", appimage_module.WINE.name).group(1)
+        self.assertIn(f"https://dl.winehq.org/wine/source/{version}/wine-{version}.tar.xz", notice)
+        self.assertIn(f"tree/wine-{version}", notice)
+        self.assertIn("Lesser General Public License", (appimage_module.FILES / "notices/WINE-COPYING.LIB.txt").read_text())
+
+    def test_launcher_uses_the_bundled_wine_and_a_prefix_outside_the_image(self):
+        launcher = (appimage_module.FILES / "AppRun").read_text(encoding="utf-8")
+        self.assertTrue(launcher.startswith("#!/bin/sh\n"))
+        self.assertNotIn("\r", launcher)
+        for folder in (appimage_module.APP_DIR, appimage_module.WINE_DIR):
+            self.assertIn(f'"$HERE/{folder}"', launcher)
+        self.assertIn('WINEPREFIX="${EVRYBUILD_WINEPREFIX:-$DATA_HOME/appimage-prefix}"', launcher)
+        self.assertIn("EVRYBUILD_APPIMAGE=", launcher)
+        self.assertIn('exec "$WINELOADER" evryBuild.exe', launcher)
+        desktop = (appimage_module.FILES / "evryBuild.desktop").read_text(encoding="utf-8")
+        self.assertIn("Icon=evryBuild\n", desktop)
+        self.assertTrue((appimage_module.FILES / "evryBuild.png").read_bytes().startswith(b"\x89PNG"))
+
+    def test_appdir_holds_the_portable_application_wine_launcher_and_notices(self):
+        archive = self.folder / "wine.tar.xz"
+        wine_archive(archive, WINE_FILES)
+        appdir = self.folder / "evryBuild.AppDir"
+        with patch.object(package_module, "source_revision", return_value="source-commit"):
+            result = appimage_module.build_appdir(self.source, appdir, archive, None)
+        self.assertTrue(result["ok"])
+        app = appdir / appimage_module.APP_DIR
+        self.assertEqual((app / "evryBuild.exe").read_bytes(), (self.source / "runtime" / package_module.HOST).read_bytes())
+        self.assertTrue((app / "LocalExile/evryBuild.Export.exe").is_file())
+        self.assertFalse((app / "Settings.xml").exists())
+        self.assertTrue(os.access(appdir / "AppRun", os.X_OK))
+        for name in ("evryBuild.desktop", "evryBuild.png", ".DirIcon"):
+            self.assertTrue((appdir / name).is_file(), name)
+        wine = appdir / appimage_module.WINE_DIR
+        kept = {p.relative_to(wine).as_posix() for p in wine.rglob("*") if p.is_file() or p.is_symlink()}
+        self.assertEqual({"bin/wine", "bin/wineserver", "bin/winepath", "lib/wine/x86_64-windows/kernel32.dll",
+                          "lib/wine/x86_64-unix/ntdll.so", "lib/wine/x86_64-unix/libwine.so", "share/wine/wine.inf",
+                          "share/wine/fonts/tahoma.ttf"}, kept)
+        self.assertTrue(os.access(wine / "bin/wine", os.X_OK))
+        self.assertEqual("ntdll.so", os.readlink(wine / "lib/wine/x86_64-unix/libwine.so"))
+        notices = appdir / appimage_module.DOC_DIR / "wine"
+        self.assertEqual({"NOTICE-Wine.md", "WINE-LICENSE.txt", "WINE-COPYING.LIB.txt"}, {p.name for p in notices.iterdir()})
+
+    def test_wine_archives_that_leave_their_folder_or_lack_wine_are_refused(self):
+        for members, root, message in (
+                ({**WINE_FILES, "bin/../../escape": b"x"}, appimage_module.WINE_ROOT, "Unexpected path"),
+                ({**WINE_FILES, "lib/outside": ("link", "../../../etc/passwd")}, appimage_module.WINE_ROOT, "leaves Wine"),
+                ({**WINE_FILES, "lib/absolute": ("link", "/etc/passwd")}, appimage_module.WINE_ROOT, "leaves Wine"),
+                (WINE_FILES, "other-root", "Unexpected path"),
+                ({k: v for k, v in WINE_FILES.items() if k != "bin/wineserver"}, appimage_module.WINE_ROOT, "bin/wineserver")):
+            with self.subTest(message=message, root=root):
+                archive = self.folder / "bad.tar.xz"
+                wine_archive(archive, members, root)
+                destination = self.folder / "bad-wine"
+                with self.assertRaisesRegex(package_module.PackageError, message):
+                    appimage_module.extract_wine(archive, destination)
+                archive.unlink()
+                shutil.rmtree(destination, ignore_errors=True)
+
+    def test_a_download_that_differs_from_its_pin_is_never_kept(self):
+        cache = self.folder / "cache"
+        pin = appimage_module.Pin("https://example.invalid/tool", hashlib.sha256(b"expected").hexdigest())
+
+        def answer(content):
+            return patch.object(appimage_module.urllib.request, "urlopen", return_value=io.BytesIO(content))
+
+        with answer(b"tampered"), self.assertRaisesRegex(package_module.PackageError, "not the pinned"):
+            appimage_module.fetch(pin, cache)
+        self.assertEqual([], list(cache.iterdir()))
+        with answer(b"expected"):
+            self.assertEqual(b"expected", appimage_module.fetch(pin, cache).read_bytes())
+        with patch.object(appimage_module.urllib.request, "urlopen", side_effect=AssertionError("cached file is reused")):
+            appimage_module.fetch(pin, cache)
+
+    def test_an_existing_or_misnamed_output_is_refused_before_downloading(self):
+        existing = self.folder / "evryBuild-x86_64.AppImage"
+        existing.write_bytes(b"earlier build")
+        with patch.object(appimage_module, "fetch", side_effect=AssertionError("no download")):
+            for output, message in ((existing, "already exists"), (self.folder / "evryBuild.zip", r"\.AppImage"),
+                                    (self.folder / "missing/evryBuild-x86_64.AppImage", "parent folder"),
+                                    (self.source / "src/evryBuild-x86_64.AppImage", "application or runtime")):
+                with self.subTest(output=output), self.assertRaisesRegex(package_module.PackageError, message):
+                    appimage_module.build(self.source, output, self.folder / "cache")
+        self.assertEqual(b"earlier build", existing.read_bytes())
 
 
 if __name__ == "__main__":

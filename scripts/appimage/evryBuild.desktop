@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=evryBuild
+GenericName=Build planner
+Comment=Path of Building for LocalExile, with Export to LocalExile
+Exec=evryBuild
+Icon=evryBuild
+Terminal=false
+Categories=Game;
+StartupWMClass=evrybuild.exe
