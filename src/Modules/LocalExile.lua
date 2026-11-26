@@ -53,7 +53,15 @@ M.WorkerScript = [[
     local native = assert(loadfile(modulePath))()
     return native.Run(executable, body, 60000)
 ]]
+-- In the Linux AppImage, Wine maps drive Z: to the Linux root, so a pasted /home/... path is Z:\home\... to the exporter.
+function M.ExporterPath(path)
+    if type(path) == "string" and path:sub(1, 1) == "/" and launch and launch.appImage then
+        return "Z:" .. (path:gsub("/", "\\"))
+    end
+    return path
+end
 function M.Request(payload, callback)
+    payload.database, payload.dataFolder = M.ExporterPath(payload.database), M.ExporterPath(payload.dataFolder)
     local body, encodeError = json.encode(payload)
     if not body then callback(nil, encodeError); return end
     local root = GetRuntimePath():gsub("[/\\]+$", "")

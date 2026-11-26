@@ -63,8 +63,9 @@ function main:Init()
 	-- URL/protocol imports cannot initiate downloads in this edition.
 	if arg then arg[1] = nil end
 	self:SetMode("BUILD", false, "Unnamed build")
-	if launch.devMode or (GetScriptPath() == GetRuntimePath() and not launch.installedMode) then
-		-- If running in dev mode or standalone mode, put user data in the script path
+	if launch.devMode or (GetScriptPath() == GetRuntimePath() and not launch.installedMode and not launch.appImage) then
+		-- If running in dev mode or standalone mode, put user data in the script path.
+		-- An AppImage's script path is read-only, so it uses the user folder like an installed copy.
 		self.userPath = GetScriptPath().."/"
 	else
 		local invalidPath, errMsg
@@ -1246,8 +1247,8 @@ function main:OpenUpdatePopup()
 	if type(update) ~= "table" then
 		return
 	end
-	local notes = ""
-	local pending = require("xml").LoadXMLFile("Update/pending.xml")
+	local notes = update.notes or ""
+	local pending = not update.notes and require("xml").LoadXMLFile("Update/pending.xml")
 	for _, node in ipairs(pending and pending[1] or { }) do
 		if type(node) == "table" and node.elem == "Notes" and type(node[1]) == "string" then
 			notes = node[1]
@@ -1269,8 +1270,14 @@ function main:OpenUpdatePopup()
 		return lines
 	end
 	t_insert(changeList, { height = 20, "^7evryBuild " .. tostring(launch.versionRelease or "?") .. " -> " .. tostring(update.release) })
-	t_insert(changeList, { height = 16, string.format("^8%d file(s) to download (%.1f MB). Your builds and settings are not changed.",
-		update.files, update.bytes / 1048576) })
+	if launch.appImage then
+		-- The AppImage is read-only and cannot replace its own files: the new release is a new AppImage.
+		t_insert(changeList, { height = 16, "^8This AppImage cannot update itself. Download the new evryBuild-x86_64.AppImage from the release" })
+		t_insert(changeList, { height = 16, "^8and replace " .. launch.appImage:gsub("%^", "") .. " with it. Your builds and settings are not changed." })
+	else
+		t_insert(changeList, { height = 16, string.format("^8%d file(s) to download (%.1f MB). Your builds and settings are not changed.",
+			update.files, update.bytes / 1048576) })
+	end
 	t_insert(changeList, { height = 12 })
 	for line in (notes:gsub("\r", "") .. "\n"):gmatch("([^\n]*)\n") do
 		local heading = line:match("^#+%s*(.*)$")
@@ -1284,6 +1291,19 @@ function main:OpenUpdatePopup()
 	end
 	local controls = { }
 	controls.changeLog = new("TextListControl", nil, {0, 20, 780, 542}, nil, changeList)
+	if launch.appImage then
+		-- Browser launches are disabled in this edition, so the release link goes to the clipboard.
+		controls.update = new("ButtonControl", nil, {-80, 570, 150, 20}, "Copy Download Link", function()
+			Copy("https://github.com/LocalExile/evryBuild/releases/latest")
+			self:ClosePopup()
+			ToastNotification:Add("Download link copied\nOpen it in your browser and download evryBuild-x86_64.AppImage.")
+		end)
+		controls.cancel = new("ButtonControl", nil, {55, 570, 80, 20}, "Later", function()
+			self:ClosePopup()
+		end)
+		self:OpenPopup(800, 600, "Update Available", controls)
+		return
+	end
 	controls.update = new("ButtonControl", nil, {-55, 570, 100, 20}, "Update Now", function()
 		self:ClosePopup()
 		local ret = self:CallMode("CanExit", "UPDATE")

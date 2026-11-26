@@ -51,7 +51,13 @@ function launch:OnInit()
 			end
 		end
 	end
-	if self.updateSource then
+	-- The Linux AppImage's launcher names the AppImage here. Its application folder is a read-only mount, so builds
+	-- and settings go to the user folder, and an update means downloading the new AppImage.
+	local appImage = os.getenv("EVRYBUILD_APPIMAGE")
+	if appImage and appImage ~= "" then
+		self.appImage = appImage
+	end
+	if self.updateSource and not self.appImage then
 		-- Remove the files the last update replaced, now that nothing holds them.
 		PLoadModule("UpdateApply", nil, true)
 	end
@@ -230,11 +236,13 @@ end
 function launch:OnSubFinished(id, ...)
 	if self.subScripts[id].type == "UPDATE" then
 		local sub = self.subScripts[id]
-		local status, a, b, c = ...
+		local status, a, b, c, notes = ...
 		self.updateCheckRunning = false
 		if sub.mode == "check" then
 			if status == "available" then
-				self.updateAvailable = { release = a, files = tonumber(b) or 0, bytes = tonumber(c) or 0 }
+				-- An AppImage check saves nothing, so it returns the release notes instead of Update/pending.xml.
+				self.updateAvailable = { release = a, files = tonumber(b) or 0, bytes = tonumber(c) or 0,
+					notes = type(notes) == "string" and notes or nil }
 			elseif status == "none" then
 				self.updateAvailable = not sub.background and "none" or nil
 			else
@@ -294,7 +302,7 @@ function launch:RunUpdateScript(mode, background)
 	file:close()
 	self.updateProgress = mode == "check" and "Checking..." or "Downloading..."
 	local id = LaunchSubScript(script, "GetScriptPath,GetRuntimePath,GetWorkDir,MakeDir", "ConPrintf,UpdateProgress",
-		mode, self.connectionProtocol)
+		mode, self.connectionProtocol, self.appImage and "appimage" or nil)
 	if id then
 		self.subScripts[id] = { type = "UPDATE", mode = mode, background = background }
 		self.updateCheckRunning = true
@@ -311,7 +319,7 @@ end
 
 -- Downloads the release found by the last check; ApplyUpdate follows when every file arrived intact.
 function launch:DownloadUpdate()
-	if type(self.updateAvailable) == "table" then
+	if type(self.updateAvailable) == "table" and not self.appImage then
 		self:RunUpdateScript("download", false)
 	end
 end

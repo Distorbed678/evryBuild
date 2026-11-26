@@ -174,6 +174,20 @@ class UpdaterTests(unittest.TestCase):
         self.assertIn(f"/releases/download/{TAG}/evryBuild-update.xml", self.server.requests)
         self.assertTrue((self.app / "Update/pending.xml").is_file())
 
+    def test_an_appimage_hears_of_a_release_but_never_writes_or_downloads_it(self):
+        """The Linux AppImage's folder is a read-only mount: the check saves nothing and returns the notes instead."""
+        self.publish("1.1.0", dict(self.installed, **{"Launch.lua": b"new launch"}), notes="## 1.1.0\n\n- A Linux change.")
+        files = lambda: {p.relative_to(self.app).as_posix(): p.read_bytes() for p in self.app.rglob("*") if p.is_file()}
+        before = files()
+        check = self.run_lua("UpdateCheck.lua", "check", None, "appimage")
+        self.assertEqual(["available", "1.1.0", 1, len(b"new launch"), "## 1.1.0\n\n- A Linux change."], check)
+        download = self.run_lua("UpdateCheck.lua", "download", None, "appimage")
+        self.assertIsNone(download[0])
+        self.assertIn("AppImage cannot update itself", download[1])
+        self.assertEqual(before, files())
+        self.assertFalse((self.app / "Update").exists())
+        self.assertTrue(all(r.endswith("/evryBuild-update.xml") for r in self.server.requests), self.server.requests)
+
     def test_same_or_older_release_is_not_offered(self):
         for release in ("1.0.0", "0.9.0"):
             self.publish(release, dict(self.installed, **{"Launch.lua": b"other"}))
