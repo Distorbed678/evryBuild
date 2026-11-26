@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0 - unreleased
+
+- Linux AppImage: `evryBuild-x86_64.AppImage` runs evryBuild on Linux with Wine 11.0 inside, so nothing else needs to be installed. Builds and settings are kept in `~/Documents/evryBuild` and Wine's prefix in `~/.local/share/evryBuild/appimage-prefix`. The AppImage tells you about new releases but never changes itself: download the new AppImage to update. CI builds it for every release, next to the Windows ZIP.
+
 ## 1.0.1 - 2026-11-03
 
 - Fix **Preview** refusing builds with "Invalid ItemSet.useSecondWeaponSet; expected true or false". PoB saves a flag it never set as `nil`, which happens for any new build or added item set. evryBuild now reads PoB's weapon-swap, skill and gem flags exactly as PoB does.

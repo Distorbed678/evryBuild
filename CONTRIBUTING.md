@@ -205,7 +205,18 @@ Files in `/Data` `/Export` and `/TreeData` can be massive and cause the EmmyLua 
 
 If you're on windows, consider downloading [git for windows](https://git-scm.com/downloads) and installing git bash. Git bash comes with a variety of typical linux tools such as grep that can make navigating the code base much easier.
 
-If you're using linux you can run the ./runtime/Path{space}of{space}Building.exe executable with wine. You will need to provide a valid wine path to the emmy lua debugger directory.
+On Linux, players can use the [Linux AppImage](README.md#linux-appimage), which bundles Wine. To develop, run the planner
+from the repository root with your own Wine. Build the exporter once first; PowerShell runs on Linux too:
+
+```bash
+pwsh scripts/build-exporter.ps1
+WINEPREFIX=~/.local/share/evryBuild/wine-prefix WINEDLLOVERRIDES='mscoree,mshtml=' WINEDEBUG=-all \
+    wine 'runtime/Path{space}of{space}Building.exe'
+```
+
+A prefix of its own keeps evryBuild apart from your other Windows programs, and `WINEDLLOVERRIDES` skips Wine's Mono
+and Gecko install prompts, which evryBuild does not need. `python3 tests/evrybuild/test_exporter.py` runs the exporter
+with the same Wine. For the EmmyLua debugger, give the debugger directory as a Wine path:
 
 ```bash
 # winepath -w ~/.vscode/extensions/tangzx.emmylua-0.8.20-linux-x64/debugger/emmy/windows/x64/

@@ -1,6 +1,7 @@
 # Package evryBuild - POB for LocalExile
 
 This guide builds the external SQLite edition and prepares a local Windows x64 portable ZIP.
+The Linux AppImage is built by CI; see [Linux AppImage](#linux-appimage).
 It does not publish a release, push Git changes or modify a LocalExile installation.
 The earlier API-based ZIP is a different implementation; do not label it as the external exporter.
 
@@ -116,6 +117,48 @@ earlier steps are undone. `Builds/`, `Settings.xml`, `LocalExile.json` and other
 Only the release GitHub marks **Latest** is offered. Publish as a pre-release first to test it with a separate copy;
 nobody is offered it until it is marked Latest. Copies from the dated releases (up to 2026.11.03) have no updater
 and need one manual download of 1.0.0 or later.
+
+## Linux AppImage
+
+`evryBuild-x86_64.AppImage` is the same application folder that `package-evrybuild.py` makes for the ZIP, plus Wine
+11.0 to run it, an `AppRun` launcher, a desktop entry and an icon (`scripts/appimage/`). It is about 400 MB; most of it
+is the planner's tree and game data, which the Windows ZIP holds too.
+
+**Releases get it from CI, never from a local build.** The `Linux AppImage` workflow
+(`.github/workflows/appimage.yml`) builds it on every pull request and push to `master` as a workflow artifact. When
+an `evrybuild-v*` release is published, it builds the AppImage from that tag, as a release package (with `--release-tag`), and
+attaches `evryBuild-x86_64.AppImage` and its `.sha256` to the release next to the Windows ZIP. Publish the release with
+the other assets as above; the workflow adds the AppImage a few minutes later.
+
+To build one locally for testing, on Linux x86_64 with the .NET 10 SDK, PowerShell and Python 3.10+:
+
+```bash
+pwsh scripts/build-exporter.ps1
+mkdir -p dist
+python3 scripts/package-appimage.py --output dist/evryBuild-x86_64.AppImage
+```
+
+The script downloads Wine ([Kron4ek's unpatched Wine 11.0 build](https://github.com/Kron4ek/Wine-Builds/releases/tag/11.0)),
+appimagetool 1.9.1 and the AppImage runtime once into `dist/appimage-cache`, and uses each only if its SHA-256 matches
+the pin in the script. To move to another Wine, change `WINE` and `WINE_ROOT` in `scripts/package-appimage.py` and the
+version and source links in `scripts/appimage/notices/NOTICE-Wine.md` together; the packaging tests check that they
+agree. The AppImage leaves out Wine's development files and 32-bit Windows libraries (evryBuild is 64-bit).
+
+How the AppImage runs:
+
+- `AppRun` starts `evryBuild.exe` with the bundled Wine, in its own prefix,
+  `~/.local/share/evryBuild/appimage-prefix` (`$EVRYBUILD_WINEPREFIX` overrides it). It is kept apart from a prefix that
+  another Wine uses, since two Wine versions cannot share a running prefix.
+- The planner sees `EVRYBUILD_APPIMAGE` and keeps builds, settings and `LocalExile.json` in Wine's Documents folder
+  (`~/Documents/evryBuild`), because the application folder is a read-only mount.
+- The exporter is the Windows `evryBuild.Export.exe`, run by Wine like the planner. Database and data paths reach it as
+  `Z:\...` paths, which Wine maps to `/...`. A native Linux exporter is not used: Wine starts a Linux program but does
+  not connect the pipes the planner talks to the exporter through.
+- A release AppImage checks for newer releases like the ZIP, but never updates itself: **Update Available** shows the
+  notes and copies the release link, and the user replaces the AppImage. Nothing is written into the image.
+
+Run the AppImage once on Linux before sharing a release, and use **Export to LocalExile → Preview** against a test
+database to check that the exporter starts under Wine.
 
 ## Check the extracted package
 

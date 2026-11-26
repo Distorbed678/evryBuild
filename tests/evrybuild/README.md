@@ -31,6 +31,17 @@ python tests/evrybuild/test_exporter.py --data-folder 'C:\LocalExile\data' --bui
 ```
 
 Replace those two paths with your actual data folder and saved PoB XML.
+
+On Linux, `test_exporter.py` runs the same Windows exporter with Wine, as the Linux AppImage does, and passes it
+`Z:\...` paths. It uses `wine` from `PATH`, or the Wine named by `EVRYBUILD_TEST_WINE`, in the usual `WINEPREFIX`.
+To test with the AppImage's own Wine, extract the AppImage (`--appimage-extract`) and set
+`EVRYBUILD_TEST_WINE=squashfs-root/usr/lib/evryBuild/wine/bin/wine`. Under Wine, the three item tests that simulate a
+running Gateway are skipped: Wine does not list Linux connections in Windows' TCP table, so the exporter cannot see the
+Gateway there (see the setup guide).
+
+`test_localexile.py` and `test_updater.py` load the Windows runtime DLLs, so they need a Windows Python. On Linux,
+extract Python's Windows embeddable package (`python-3.12.x-embed-amd64.zip` from python.org) and run them with Wine
+from the repository root, for example `wine ../python-embed/python.exe tests/evrybuild/test_updater.py -v`.
 The test reads that data/build, but still exports only into its temporary test database.
 It never opens your production save database.
 

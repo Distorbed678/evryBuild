@@ -1279,3 +1279,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 *******************************************************************************
+
+Wine (only in the Linux AppImage):
+
+*******************************************************************************
+
+Copyright (c) 1993-2026 the Wine project authors.
+Wine is licensed under the GNU Lesser General Public License, version 2.1 or later. The AppImage includes Wine 11.0
+unmodified. Its licence, its full LGPL text and where to get its source code are in
+scripts/appimage/notices/ in the source repository, and in usr/share/doc/evryBuild/wine/ inside the AppImage.
+
+*******************************************************************************
