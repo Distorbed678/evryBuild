@@ -1292,9 +1292,12 @@ function main:OpenUpdatePopup()
 	local controls = { }
 	controls.changeLog = new("TextListControl", nil, {0, 20, 780, 542}, nil, changeList)
 	if launch.appImage then
-		-- Browser launches are disabled in this edition, so the release link goes to the clipboard.
+		-- The page of the release the check found, beside the update source. Browser launches are disabled in this
+		-- edition, so the link goes to the clipboard.
+		local releases = (launch.updateSource or ""):match("^(https?://.-/releases/)") or "https://github.com/LocalExile/evryBuild/releases/"
+		local link = releases .. "tag/evrybuild-v" .. tostring(update.release)
 		controls.update = new("ButtonControl", nil, {-80, 570, 150, 20}, "Copy Download Link", function()
-			Copy("https://github.com/LocalExile/evryBuild/releases/latest")
+			Copy(link)
 			self:ClosePopup()
 			ToastNotification:Add("Download link copied\nOpen it in your browser and download evryBuild-x86_64.AppImage.")
 		end)

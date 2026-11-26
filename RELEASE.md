@@ -127,8 +127,9 @@ is the planner's tree and game data, which the Windows ZIP holds too.
 **Releases get it from CI, never from a local build.** The `Linux AppImage` workflow
 (`.github/workflows/appimage.yml`) builds it on every pull request and push to `master` as a workflow artifact. When
 an `evrybuild-v*` release is published, it builds the AppImage from that tag, as a release package (with `--release-tag`), and
-attaches `evryBuild-x86_64.AppImage` and its `.sha256` to the release next to the Windows ZIP. Publish the release with
-the other assets as above; the workflow adds the AppImage a few minutes later.
+attaches `evryBuild-x86_64.AppImage` and its `.sha256` to the release next to the Windows ZIP. The workflow needs about
+ten minutes, and a release marked **Latest** is offered at once, so publish it as a pre-release with the other assets
+first, wait for the AppImage to appear on it, then mark it **Latest** (`gh release edit <tag> --prerelease=false --latest`).
 
 To build one locally for testing, on Linux x86_64 with the .NET 10 SDK, PowerShell and Python 3.10+:
 
@@ -155,7 +156,8 @@ How the AppImage runs:
   `Z:\...` paths, which Wine maps to `/...`. A native Linux exporter is not used: Wine starts a Linux program but does
   not connect the pipes the planner talks to the exporter through.
 - A release AppImage checks for newer releases like the ZIP, but never updates itself: **Update Available** shows the
-  notes and copies the release link, and the user replaces the AppImage. Nothing is written into the image.
+  notes and copies the link to that release's page, and the user replaces the AppImage. Nothing is written into the
+  image.
 
 Run the AppImage once on Linux before sharing a release, and use **Export to LocalExile → Preview** against a test
 database to check that the exporter starts under Wine.

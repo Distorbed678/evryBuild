@@ -180,7 +180,7 @@ class UpdaterTests(unittest.TestCase):
         files = lambda: {p.relative_to(self.app).as_posix(): p.read_bytes() for p in self.app.rglob("*") if p.is_file()}
         before = files()
         check = self.run_lua("UpdateCheck.lua", "check", None, "appimage")
-        self.assertEqual(["available", "1.1.0", 1, len(b"new launch"), "## 1.1.0\n\n- A Linux change."], check)
+        self.assertEqual(["available", "1.1.0", 0, 0, "## 1.1.0\n\n- A Linux change."], check)
         download = self.run_lua("UpdateCheck.lua", "download", None, "appimage")
         self.assertIsNone(download[0])
         self.assertIn("AppImage cannot update itself", download[1])

@@ -15,7 +15,8 @@ DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/evryBuild"
 
 export WINEPREFIX="${EVRYBUILD_WINEPREFIX:-$DATA_HOME/appimage-prefix}"
 # No Mono or Gecko install prompts (evryBuild needs neither), and no Wine menu entries or file associations.
-export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-mscoree,mshtml=;winemenubuilder.exe=d}"
+# Overrides you set yourself are added after these.
+export WINEDLLOVERRIDES="mscoree,mshtml=;winemenubuilder.exe=d${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"
 export WINEDEBUG="${WINEDEBUG:--all}"
 # Use this AppImage's Wine even when another Wine is installed or configured.
 export WINELOADER="$WINE_HOME/bin/wine"
@@ -27,4 +28,9 @@ export EVRYBUILD_APPIMAGE="${APPIMAGE:-$HERE}"
 
 mkdir -p "$(dirname "$WINEPREFIX")"
 cd "$APP"
-exec "$WINELOADER" evryBuild.exe
+status=0
+"$WINELOADER" evryBuild.exe || status=$?
+# Wine's server outlives the program by a few seconds. Wait for it, so nothing still runs from this AppImage's mount
+# when the AppImage unmounts it.
+"$WINESERVER" -w || true
+exit "$status"

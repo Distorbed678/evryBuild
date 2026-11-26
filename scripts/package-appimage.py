@@ -173,8 +173,9 @@ def build(source_root: Path, output: Path, cache: Path, release=None) -> dict:
     target = output.expanduser().resolve()
     if target.suffix != ".AppImage":
         raise PackageError("The output must be a .AppImage file.")
-    if target.exists() or output.is_symlink():
-        raise PackageError("The output already exists. Choose a new file; existing files are never overwritten.")
+    checksum = Path(str(target) + ".sha256")
+    if target.exists() or output.is_symlink() or checksum.exists() or checksum.is_symlink():
+        raise PackageError("The output or its .sha256 already exists. Choose a new file; existing files are never overwritten.")
     if not target.parent.is_dir():
         raise PackageError("The output's parent folder must already exist.")
     if target.is_relative_to(source / "src") or target.is_relative_to(source / "runtime"):
@@ -191,7 +192,7 @@ def build(source_root: Path, output: Path, cache: Path, release=None) -> dict:
             raise PackageError("The output appeared while building; it was not overwritten.")
         os.rename(partial, target)
     digest = sha256_file(target)
-    Path(str(target) + ".sha256").write_text(f"{digest}  {target.name}\n", encoding="utf-8")
+    checksum.write_text(f"{digest}  {target.name}\n", encoding="utf-8")
     return {"ok": True, "appImage": str(target), "sha256": digest, "bytes": target.stat().st_size,
             "version": packaged["version"], "sourceRevision": packaged["sourceRevision"],
             "wine": WINE.name, **({"tag": packaged["tag"]} if "tag" in packaged else {})}

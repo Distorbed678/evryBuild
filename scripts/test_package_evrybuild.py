@@ -397,7 +397,9 @@ class AppImageTests(unittest.TestCase):
             self.assertIn(f'"$HERE/{folder}"', launcher)
         self.assertIn('WINEPREFIX="${EVRYBUILD_WINEPREFIX:-$DATA_HOME/appimage-prefix}"', launcher)
         self.assertIn("EVRYBUILD_APPIMAGE=", launcher)
-        self.assertIn('exec "$WINELOADER" evryBuild.exe', launcher)
+        self.assertIn('"$WINELOADER" evryBuild.exe || status=$?', launcher)
+        self.assertIn('"$WINESERVER" -w', launcher)
+        self.assertIn('winemenubuilder.exe=d${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"', launcher)
         desktop = (appimage_module.FILES / "evryBuild.desktop").read_text(encoding="utf-8")
         self.assertIn("Icon=evryBuild\n", desktop)
         self.assertTrue((appimage_module.FILES / "evryBuild.png").read_bytes().startswith(b"\x89PNG"))
@@ -460,13 +462,16 @@ class AppImageTests(unittest.TestCase):
     def test_an_existing_or_misnamed_output_is_refused_before_downloading(self):
         existing = self.folder / "evryBuild-x86_64.AppImage"
         existing.write_bytes(b"earlier build")
+        checksum = self.folder / "moved.AppImage.sha256"
+        checksum.write_text("earlier checksum")
         with patch.object(appimage_module, "fetch", side_effect=AssertionError("no download")):
-            for output, message in ((existing, "already exists"), (self.folder / "evryBuild.zip", r"\.AppImage"),
+            for output, message in ((existing, "already exists"), (self.folder / "moved.AppImage", "already exists"), (self.folder / "evryBuild.zip", r"\.AppImage"),
                                     (self.folder / "missing/evryBuild-x86_64.AppImage", "parent folder"),
                                     (self.source / "src/evryBuild-x86_64.AppImage", "application or runtime")):
                 with self.subTest(output=output), self.assertRaisesRegex(package_module.PackageError, message):
                     appimage_module.build(self.source, output, self.folder / "cache")
         self.assertEqual(b"earlier build", existing.read_bytes())
+        self.assertEqual("earlier checksum", checksum.read_text())
 
 
 if __name__ == "__main__":

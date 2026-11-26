@@ -290,11 +290,12 @@ if mode == "check" then
 		if not readOnly then os.remove(pendingPath) end
 		return "none", installedRelease
 	end
-	local changed, removed, bytes = plan(remote)
 	if readOnly then
+		-- Nothing is downloaded, so there is no plan: just the release and its notes.
 		ConPrintf("Update %s available: download the new AppImage", remote.version.release)
-		return "available", remote.version.release, #changed, bytes, remote.notes
+		return "available", remote.version.release, 0, 0, remote.notes
 	end
+	local changed, removed, bytes = plan(remote)
 	local saved, writeErr = writeFile(pendingPath, text)
 	if not saved then return nil, "Couldn't save the update manifest: " .. tostring(writeErr) end
 	ConPrintf("Update %s available: %d file(s) to download, %d to remove", remote.version.release, #changed, #removed)
