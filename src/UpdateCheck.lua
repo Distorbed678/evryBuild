@@ -291,9 +291,9 @@ if mode == "check" then
 		return "none", installedRelease
 	end
 	if readOnly then
-		-- Nothing is downloaded, so there is no plan: just the release and its notes.
+		-- Nothing is downloaded, so there is no plan: just the release, its notes and its tag.
 		ConPrintf("Update %s available: download the new AppImage", remote.version.release)
-		return "available", remote.version.release, 0, 0, remote.notes
+		return "available", remote.version.release, 0, 0, remote.notes, remote.version.tag
 	end
 	local changed, removed, bytes = plan(remote)
 	local saved, writeErr = writeFile(pendingPath, text)

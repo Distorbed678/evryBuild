@@ -236,13 +236,14 @@ end
 function launch:OnSubFinished(id, ...)
 	if self.subScripts[id].type == "UPDATE" then
 		local sub = self.subScripts[id]
-		local status, a, b, c, notes = ...
+		local status, a, b, c, notes, tag = ...
 		self.updateCheckRunning = false
 		if sub.mode == "check" then
 			if status == "available" then
 				-- An AppImage check saves nothing, so it returns the release notes instead of Update/pending.xml.
 				self.updateAvailable = { release = a, files = tonumber(b) or 0, bytes = tonumber(c) or 0,
-					notes = type(notes) == "string" and notes or nil }
+					notes = type(notes) == "string" and notes or nil,
+					tag = type(tag) == "string" and tag ~= "" and tag or nil }
 			elseif status == "none" then
 				self.updateAvailable = not sub.background and "none" or nil
 			else

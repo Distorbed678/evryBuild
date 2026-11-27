@@ -18,7 +18,7 @@ On Linux, download `evryBuild-x86_64.AppImage` from the same release, make it ex
 Wine that runs the planner and the exporter, so nothing else is needed. Builds and settings are kept in
 `~/Documents/evryBuild` and Wine's prefix in `~/.local/share/evryBuild/appimage-prefix`; see
 [the README](../README.md#linux-appimage). Linux paths appear on drive `Z:` in the file pickers, so a database at
-`/home/you/LocalExile/data/saves.db` is `Z:\home\you\LocalExile\data\saves.db`. You can also paste the Linux path
+`/home/you/LocalExile/data/characters.db` (or legacy `saves.db`) is `Z:\home\you\LocalExile\data\characters.db`. You can also paste the Linux path
 into the field; the AppImage passes it on as the `Z:` path.
 
 ## Before the first export
@@ -137,7 +137,7 @@ Include the release/version, reproduction steps and relevant export warnings, wi
 | Export response was lost or timed out | Refresh the character list before retrying. A successful write may already have committed; duplicate names are refused. |
 | Items load but effects or skills do not work | Read the compatibility summary and full `.export.json` report beside the backup. Loadable entries remain even when gameplay support is partial, missing or unknown. |
 | The bundled exporter cannot start | Extract the complete portable ZIP again to a writable local folder. Keep `LocalExile/evryBuild.Export.exe` with the application; a source checkout must run `scripts/build-exporter.ps1` before use. |
-| Linux: "Choose an existing SQLite database on a local drive" | Outside the AppImage (Wine from a source checkout), the path must be a Windows path. Use **Browse**, or type the database's Linux path after `Z:` with backslashes, such as `Z:\home\you\LocalExile\data\saves.db`. |
+| Linux: "Choose an existing SQLite database on a local drive" | Outside the AppImage (Wine from a source checkout), the path must be a Windows path. Use **Browse**, or type the database's Linux path after `Z:` with backslashes, such as `Z:\home\you\LocalExile\data\characters.db` (or `saves.db`). |
 | Linux: the AppImage does not start | Run it from a terminal to see why. Without FUSE, add `--appimage-extract-and-run`. Set `WINEDEBUG=err+all` for Wine's errors. If the prefix is damaged, close evryBuild and delete `~/.local/share/evryBuild/appimage-prefix`; your builds in `~/Documents/evryBuild` are not in it. |
 
 ## Database safety

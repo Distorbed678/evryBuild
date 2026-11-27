@@ -252,9 +252,12 @@ class IntegrationTests(unittest.TestCase):
             local plain=sent('/home/me/LocalExile/data/saves.db','/home/me/LocalExile/data')
             assert(plain.database=='/home/me/LocalExile/data/saves.db', 'only the AppImage maps Linux paths')
             launch.appImage='/home/me/evryBuild-x86_64.AppImage'
-            local mapped=sent('/home/me/LocalExile/data/saves.db','/home/me/LocalExile/data')
-            assert(mapped.database=='Z:\\\\home\\\\me\\\\LocalExile\\\\data\\\\saves.db', mapped.database)
+            local original={operation='inspect',database='/home/me/LocalExile/data/characters.db',dataFolder='/home/me/LocalExile/data'}
+            M.Request(original, function() end)
+            local mapped=json.decode(workers[#workers].args[3])
+            assert(mapped.database=='Z:\\\\home\\\\me\\\\LocalExile\\\\data\\\\characters.db', mapped.database)
             assert(mapped.dataFolder=='Z:\\\\home\\\\me\\\\LocalExile\\\\data', mapped.dataFolder)
+            assert(original.database=='/home/me/LocalExile/data/characters.db', 'caller payload is not mutated')
             local windows=sent('C:/server/data/saves.db','')
             assert(windows.database=='C:/server/data/saves.db' and windows.dataFolder=='')
             launch.appImage=nil

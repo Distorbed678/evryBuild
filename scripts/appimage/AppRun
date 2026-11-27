@@ -15,8 +15,8 @@ DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/evryBuild"
 
 export WINEPREFIX="${EVRYBUILD_WINEPREFIX:-$DATA_HOME/appimage-prefix}"
 # No Mono or Gecko install prompts (evryBuild needs neither), and no Wine menu entries or file associations.
-# Overrides you set yourself are added after these.
-export WINEDLLOVERRIDES="mscoree,mshtml=;winemenubuilder.exe=d${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"
+# User overrides come first because Wine honors the first entry for a DLL.
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}mscoree,mshtml=;winemenubuilder.exe=d"
 export WINEDEBUG="${WINEDEBUG:--all}"
 # Use this AppImage's Wine even when another Wine is installed or configured.
 export WINELOADER="$WINE_HOME/bin/wine"

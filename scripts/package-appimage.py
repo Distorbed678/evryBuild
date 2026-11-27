@@ -159,7 +159,7 @@ def build_appdir(source: Path, appdir: Path, wine_archive: Path, release) -> dic
 def run_appimagetool(tool: Path, runtime: Path, appdir: Path, output: Path) -> None:
     tool.chmod(0o755)
     # appimagetool is itself an AppImage; extract-and-run needs no FUSE on the build machine.
-    env = dict(os.environ, ARCH="x86_64", APPIMAGE_EXTRACT_AND_RUN="1", NO_CLEANUP="1")
+    env = dict(os.environ, ARCH="x86_64", APPIMAGE_EXTRACT_AND_RUN="1")
     command = [str(tool), "--no-appstream", "--runtime-file", str(runtime), "--comp", "zstd",
                "--mksquashfs-opt", "-Xcompression-level", "--mksquashfs-opt", "19",
                "--mksquashfs-opt", "-b", "--mksquashfs-opt", "1M", str(appdir), str(output)]

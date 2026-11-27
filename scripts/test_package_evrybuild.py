@@ -371,6 +371,18 @@ WINE_FILES = {"bin/wine": b"loader", "bin/wineserver": b"server", "bin/winegcc":
               "share/wine/fonts/tahoma.ttf": b"font", "lib/wine/x86_64-unix/libwine.so": ("link", "ntdll.so")}
 
 
+def can_symlink(folder: Path) -> bool:
+    """Windows without Developer Mode refuses symlink creation; check once per temp folder."""
+    probe = folder / ".symlink-probe"
+    try:
+        probe.symlink_to("target")
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.unlink(missing_ok=True)
+
+
 class AppImageTests(unittest.TestCase):
     """The AppImage's layout, launcher and pinned downloads. appimagetool and the network are not used."""
     # The same synthetic source checkout as the portable package tests.
@@ -390,23 +402,28 @@ class AppImageTests(unittest.TestCase):
         self.assertIn("Lesser General Public License", (appimage_module.FILES / "notices/WINE-COPYING.LIB.txt").read_text())
 
     def test_launcher_uses_the_bundled_wine_and_a_prefix_outside_the_image(self):
-        launcher = (appimage_module.FILES / "AppRun").read_text(encoding="utf-8")
+        raw_launcher = (appimage_module.FILES / "AppRun").read_bytes()
+        self.assertNotIn(b"\r", raw_launcher)
+        launcher = raw_launcher.decode("utf-8")
         self.assertTrue(launcher.startswith("#!/bin/sh\n"))
-        self.assertNotIn("\r", launcher)
         for folder in (appimage_module.APP_DIR, appimage_module.WINE_DIR):
             self.assertIn(f'"$HERE/{folder}"', launcher)
         self.assertIn('WINEPREFIX="${EVRYBUILD_WINEPREFIX:-$DATA_HOME/appimage-prefix}"', launcher)
         self.assertIn("EVRYBUILD_APPIMAGE=", launcher)
         self.assertIn('"$WINELOADER" evryBuild.exe || status=$?', launcher)
         self.assertIn('"$WINESERVER" -w', launcher)
-        self.assertIn('winemenubuilder.exe=d${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"', launcher)
-        desktop = (appimage_module.FILES / "evryBuild.desktop").read_text(encoding="utf-8")
+        self.assertIn('WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}mscoree,mshtml=;winemenubuilder.exe=d"', launcher)
+        raw_desktop = (appimage_module.FILES / "evryBuild.desktop").read_bytes()
+        self.assertNotIn(b"\r", raw_desktop)
+        desktop = raw_desktop.decode("utf-8")
         self.assertIn("Icon=evryBuild\n", desktop)
         self.assertTrue((appimage_module.FILES / "evryBuild.png").read_bytes().startswith(b"\x89PNG"))
 
     def test_appdir_holds_the_portable_application_wine_launcher_and_notices(self):
+        symlinks = can_symlink(self.folder)
+        members = WINE_FILES if symlinks else {k: v for k, v in WINE_FILES.items() if not isinstance(v, tuple)}
         archive = self.folder / "wine.tar.xz"
-        wine_archive(archive, WINE_FILES)
+        wine_archive(archive, members)
         appdir = self.folder / "evryBuild.AppDir"
         with patch.object(package_module, "source_revision", return_value="source-commit"):
             result = appimage_module.build_appdir(self.source, appdir, archive, None)
@@ -420,29 +437,35 @@ class AppImageTests(unittest.TestCase):
             self.assertTrue((appdir / name).is_file(), name)
         wine = appdir / appimage_module.WINE_DIR
         kept = {p.relative_to(wine).as_posix() for p in wine.rglob("*") if p.is_file() or p.is_symlink()}
-        self.assertEqual({"bin/wine", "bin/wineserver", "bin/winepath", "lib/wine/x86_64-windows/kernel32.dll",
-                          "lib/wine/x86_64-unix/ntdll.so", "lib/wine/x86_64-unix/libwine.so", "share/wine/wine.inf",
-                          "share/wine/fonts/tahoma.ttf"}, kept)
+        expected = {"bin/wine", "bin/wineserver", "bin/winepath", "lib/wine/x86_64-windows/kernel32.dll",
+                    "lib/wine/x86_64-unix/ntdll.so", "share/wine/wine.inf", "share/wine/fonts/tahoma.ttf"}
+        if symlinks:
+            expected.add("lib/wine/x86_64-unix/libwine.so")
+        self.assertEqual(expected, kept)
         self.assertTrue(os.access(wine / "bin/wine", os.X_OK))
-        self.assertEqual("ntdll.so", os.readlink(wine / "lib/wine/x86_64-unix/libwine.so"))
+        if symlinks:
+            self.assertEqual("ntdll.so", os.readlink(wine / "lib/wine/x86_64-unix/libwine.so"))
         notices = appdir / appimage_module.DOC_DIR / "wine"
         self.assertEqual({"NOTICE-Wine.md", "WINE-LICENSE.txt", "WINE-COPYING.LIB.txt"}, {p.name for p in notices.iterdir()})
 
     def test_wine_archives_that_leave_their_folder_or_lack_wine_are_refused(self):
+        base = WINE_FILES if can_symlink(self.folder) else {k: v for k, v in WINE_FILES.items() if not isinstance(v, tuple)}
         for members, root, message in (
-                ({**WINE_FILES, "bin/../../escape": b"x"}, appimage_module.WINE_ROOT, "Unexpected path"),
-                ({**WINE_FILES, "lib/outside": ("link", "../../../etc/passwd")}, appimage_module.WINE_ROOT, "leaves Wine"),
-                ({**WINE_FILES, "lib/absolute": ("link", "/etc/passwd")}, appimage_module.WINE_ROOT, "leaves Wine"),
-                (WINE_FILES, "other-root", "Unexpected path"),
-                ({k: v for k, v in WINE_FILES.items() if k != "bin/wineserver"}, appimage_module.WINE_ROOT, "bin/wineserver")):
+                ({**base, "bin/../../escape": b"x"}, appimage_module.WINE_ROOT, "Unexpected path"),
+                ({**base, "lib/outside": ("link", "../../../etc/passwd")}, appimage_module.WINE_ROOT, "leaves Wine"),
+                ({**base, "lib/absolute": ("link", "/etc/passwd")}, appimage_module.WINE_ROOT, "leaves Wine"),
+                (base, "other-root", "Unexpected path"),
+                ({k: v for k, v in base.items() if k != "bin/wineserver"}, appimage_module.WINE_ROOT, "bin/wineserver")):
             with self.subTest(message=message, root=root):
                 archive = self.folder / "bad.tar.xz"
                 wine_archive(archive, members, root)
                 destination = self.folder / "bad-wine"
-                with self.assertRaisesRegex(package_module.PackageError, message):
-                    appimage_module.extract_wine(archive, destination)
-                archive.unlink()
-                shutil.rmtree(destination, ignore_errors=True)
+                try:
+                    with self.assertRaisesRegex(package_module.PackageError, message):
+                        appimage_module.extract_wine(archive, destination)
+                finally:
+                    archive.unlink(missing_ok=True)
+                    shutil.rmtree(destination, ignore_errors=True)
 
     def test_a_download_that_differs_from_its_pin_is_never_kept(self):
         cache = self.folder / "cache"

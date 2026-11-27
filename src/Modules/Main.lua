@@ -1272,8 +1272,10 @@ function main:OpenUpdatePopup()
 	t_insert(changeList, { height = 20, "^7evryBuild " .. tostring(launch.versionRelease or "?") .. " -> " .. tostring(update.release) })
 	if launch.appImage then
 		-- The AppImage is read-only and cannot replace its own files: the new release is a new AppImage.
-		t_insert(changeList, { height = 16, "^8This AppImage cannot update itself. Download the new evryBuild-x86_64.AppImage from the release" })
-		t_insert(changeList, { height = 16, "^8and replace " .. launch.appImage:gsub("%^", "") .. " with it. Your builds and settings are not changed." })
+		for _, part in ipairs(wrap("This AppImage cannot update itself. Download the new evryBuild-x86_64.AppImage from the release and replace "
+				.. launch.appImage:gsub("%^", "") .. " with it. Your builds and settings are not changed.")) do
+			t_insert(changeList, { height = 16, "^8" .. part })
+		end
 	else
 		t_insert(changeList, { height = 16, string.format("^8%d file(s) to download (%.1f MB). Your builds and settings are not changed.",
 			update.files, update.bytes / 1048576) })
@@ -1295,7 +1297,8 @@ function main:OpenUpdatePopup()
 		-- The page of the release the check found, beside the update source. Browser launches are disabled in this
 		-- edition, so the link goes to the clipboard.
 		local releases = (launch.updateSource or ""):match("^(https?://.-/releases/)") or "https://github.com/LocalExile/evryBuild/releases/"
-		local link = releases .. "tag/evrybuild-v" .. tostring(update.release)
+		local tag = update.tag or ("evrybuild-v" .. tostring(update.release))
+		local link = releases .. "tag/" .. tag
 		controls.update = new("ButtonControl", nil, {-80, 570, 150, 20}, "Copy Download Link", function()
 			Copy(link)
 			self:ClosePopup()

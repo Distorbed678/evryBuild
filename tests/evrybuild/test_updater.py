@@ -107,9 +107,11 @@ class UpdaterTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
 
-    def manifest(self, release, files, *, update=None, sources=None, notes="## Release\n\n- A change."):
+    def manifest(self, release, files, *, update=None, sources=None, notes="## Release\n\n- A change.", tag=None):
         root = ET.Element("PoBVersion")
-        ET.SubElement(root, "Version", number="2.67.2", branch="evrybuild", platform="win32", release=release)
+        version = ET.SubElement(root, "Version", number="2.67.2", branch="evrybuild", platform="win32", release=release)
+        if tag is not None:
+            version.set("tag", tag)
         ET.SubElement(root, "Update", url=update or self.server.base + "releases/latest/download/evryBuild-update.xml")
         sources = sources or {"repo": self.server.base + f"raw/{COMMIT}/", "asset": self.server.base + f"releases/download/{TAG}/"}
         for part, url in sources.items():
@@ -176,11 +178,11 @@ class UpdaterTests(unittest.TestCase):
 
     def test_an_appimage_hears_of_a_release_but_never_writes_or_downloads_it(self):
         """The Linux AppImage's folder is a read-only mount: the check saves nothing and returns the notes instead."""
-        self.publish("1.1.0", dict(self.installed, **{"Launch.lua": b"new launch"}), notes="## 1.1.0\n\n- A Linux change.")
+        self.publish("1.1.0", dict(self.installed, **{"Launch.lua": b"new launch"}), notes="## 1.1.0\n\n- A Linux change.", tag=TAG)
         files = lambda: {p.relative_to(self.app).as_posix(): p.read_bytes() for p in self.app.rglob("*") if p.is_file()}
         before = files()
         check = self.run_lua("UpdateCheck.lua", "check", None, "appimage")
-        self.assertEqual(["available", "1.1.0", 0, 0, "## 1.1.0\n\n- A Linux change."], check)
+        self.assertEqual(["available", "1.1.0", 0, 0, "## 1.1.0\n\n- A Linux change.", TAG], check)
         download = self.run_lua("UpdateCheck.lua", "download", None, "appimage")
         self.assertIsNone(download[0])
         self.assertIn("AppImage cannot update itself", download[1])

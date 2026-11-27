@@ -61,8 +61,10 @@ function M.ExporterPath(path)
     return path
 end
 function M.Request(payload, callback)
-    payload.database, payload.dataFolder = M.ExporterPath(payload.database), M.ExporterPath(payload.dataFolder)
-    local body, encodeError = json.encode(payload)
+    local outgoing = { }
+    for key, value in pairs(payload) do outgoing[key] = value end
+    outgoing.database, outgoing.dataFolder = M.ExporterPath(outgoing.database), M.ExporterPath(outgoing.dataFolder)
+    local body, encodeError = json.encode(outgoing)
     if not body then callback(nil, encodeError); return end
     local root = GetRuntimePath():gsub("[/\\]+$", "")
     local id = LaunchSubScript(M.WorkerScript, "", "", GetScriptPath() .. "/Modules/LocalExileNative.lua",

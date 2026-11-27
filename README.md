@@ -78,7 +78,7 @@ The AppImage itself is read-only, so everything you change lives outside it:
 | Wine prefix | `~/.local/share/evryBuild/appimage-prefix`, or `$EVRYBUILD_WINEPREFIX` |
 
 The first start creates the Wine prefix, which takes a little longer. Linux paths appear under drive `Z:` in the file
-pickers: your `saves.db` in `/home/you/LocalExile/data` is `Z:\home\you\LocalExile\data\saves.db`. You can also
+pickers: your `characters.db` (or legacy `saves.db`) in `/home/you/LocalExile/data` is `Z:\home\you\LocalExile\data\characters.db`. You can also
 paste the Linux path into the database or data folder field. Under Wine, **Send to LocalExile** cannot tell whether
 you are in game or the Gateway still holds the character: log out and restart the Gateway before you send
 ([details](docs/LocalExile.md#send-an-item-to-a-character)).
