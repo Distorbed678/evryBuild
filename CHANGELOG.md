@@ -1,8 +1,9 @@
 # Changelog
 
-## 1.1.0 - unreleased
+## 1.1.0 - 2026-11-26
 
-- Linux AppImage: `evryBuild-x86_64.AppImage` runs evryBuild on Linux with Wine 11.0 inside, so nothing else needs to be installed. Builds and settings are kept in `~/Documents/evryBuild` and Wine's prefix in `~/.local/share/evryBuild/appimage-prefix`. The AppImage tells you about new releases but never changes itself: download the new AppImage to update. CI builds it for every release, next to the Windows ZIP.
+- Support LocalExile's split relational save layout (`characters.db` + read-only `auth.db`, columnar `account_characters`, `character_saves` + child tables + `items`/`item_mods`, and `world.db` unique catalogue including `own_implicits`) alongside legacy `saves.db` and pre-migration split databases, with exact missing-table/column diagnostics (#8, #9).
+- Linux AppImage: `evryBuild-x86_64.AppImage` runs evryBuild on Linux with Wine 11.0 inside, so nothing else needs to be installed. Builds and settings are kept in `~/Documents/evryBuild` and Wine's prefix in `~/.local/share/evryBuild/appimage-prefix`. The AppImage tells you about new releases and copies the release download link without modifying itself. CI builds and attaches it for every release, next to the Windows ZIP (#10).
 
 ## 1.0.1 - 2026-11-03
 
