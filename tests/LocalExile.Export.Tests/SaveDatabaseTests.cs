@@ -1002,4 +1002,90 @@ public sealed class SaveDatabaseTests : IDisposable
             Assert.Equal(4200L, Scalar(db, "SELECT keystone FROM character_tattoo_keystones WHERE save=$s AND node=11", ("$s", saveId)));
         });
     }
+
+    [Fact]
+    public void Game_AUTH_DB_is_not_attached_to_an_unrelated_or_renamed_characters_database()
+    {
+        string serverADir = Path.Combine(_root, "server-a");
+        string serverBDir = Path.Combine(_root, "server-b");
+        var (serverAChars, serverAAuth) = CreateSplitRelationalDb(serverADir);
+        var (serverBChars, serverBAuth) = CreateSplitRelationalDb(serverBDir);
+        File.Delete(serverBAuth);
+
+        // When Game_CHARACTERS_DB points at Server A, Server B must not silently attach Server A's auth.db.
+        Environment.SetEnvironmentVariable("Game_CHARACTERS_DB", serverAChars);
+        Environment.SetEnvironmentVariable("Game_AUTH_DB", serverAAuth);
+        var mismatch = Assert.Throws<ArgumentException>(() => SaveDatabase.Open(serverBChars, write: false));
+        Assert.Contains("no companion auth database was found", mismatch.Message);
+
+        // A renamed copy without its own <name>-auth.db or sibling auth.db also must not inherit Game_AUTH_DB.
+        Environment.SetEnvironmentVariable("Game_CHARACTERS_DB", null);
+        string scratchDir = Path.Combine(_root, "scratch-only");
+        var (scratchChars, scratchAuth) = CreateSplitRelationalDb(scratchDir, "scratch.db", "scratch-auth.db");
+        File.Delete(scratchAuth);
+        var renamed = Assert.Throws<ArgumentException>(() => SaveDatabase.Open(scratchChars, write: false));
+        Assert.Contains("no companion auth database was found", renamed.Message);
+    }
+
+    [Fact]
+    public void ValidateSchema_without_databasePath_unescapes_file_uri_from_ExportCommand_Open()
+    {
+        var (charsPath, authPath) = CreateSplitRelationalDb(Path.Combine(_root, "uri #1 100%"));
+        using var conn = ExportCommand.Open(charsPath, write: false);
+        var layout = ExportCommand.ValidateSchema(conn);
+        Assert.Equal("auth", layout.AccountsSchema);
+        Assert.Equal(Path.GetFullPath(authPath), layout.AuthDatabasePath);
+        Assert.Equal(@"C:/Users/Test #1/100%?/auth.db",
+            SaveDatabase.PathFromDataSource("file:///C:/Users/Test %231/100%25%3F/auth.db?mode=ro"));
+        Assert.Equal("/home/user/copy #1/auth.db",
+            SaveDatabase.PathFromDataSource("file:///home/user/copy %231/auth.db?mode=ro"));
+    }
+
+    [Fact]
+    public void Relative_Game_WORLD_DB_and_own_implicits_are_respected_by_unique_catalog()
+    {
+        var (charsPath, _) = CreateSplitRelationalDb();
+        string customWorld = Path.Combine(_root, "custom-world.db");
+        WithDb(customWorld, db =>
+        {
+            Exec(db, """
+                CREATE TABLE unique_items(name TEXT NOT NULL, base_type TEXT NOT NULL, item_level INTEGER NOT NULL DEFAULT 86,
+                    corrupted INTEGER NOT NULL DEFAULT 0, own_implicits INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY(name, base_type)) STRICT;
+                CREATE TABLE unique_item_mods(name TEXT NOT NULL, base_type TEXT NOT NULL, implicit INTEGER NOT NULL,
+                    ord INTEGER NOT NULL, mod TEXT NOT NULL, PRIMARY KEY(name, base_type, implicit, ord)) STRICT;
+                INSERT INTO unique_items VALUES('FixtureUnique', 'Metadata/Items/Ring', 70, 0, 1, 1);
+                INSERT INTO unique_item_mods VALUES('FixtureUnique', 'Metadata/Items/Ring', 1, 0, 'Strength1');
+                INSERT INTO unique_item_mods VALUES('FixtureUnique', 'Metadata/Items/Ring', 0, 0, 'DexterityUnique');
+                """);
+        });
+        Environment.SetEnvironmentVariable("Game_WORLD_DB", "custom-world.db");
+
+        using var session = SaveDatabase.Open(charsPath, write: false);
+        using var uniques = SaveDatabase.OpenUniqueCatalog(session.Connection, charsPath, _data);
+        var first = uniques.Find("FixtureUnique", "Metadata/Items/Ring");
+        var second = uniques.Find("FixtureUnique", "Metadata/Items/Ring");
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.NotNull(first.Implicits);
+        Assert.Equal(["Strength1"], first.Implicits);
+        Assert.Equal(["DexterityUnique"], first.Mods);
+
+        var catalog = new ItemCatalog(_data);
+        var type = catalog.All.Single(t => t.Id == "Metadata/Items/Ring");
+        var completed = ItemSend.Completed(new GameServer.Core.Protocol.Instance.Item(RingHash, ["Base", "Mods"], 7)
+            { Rarity = GameServer.Core.Protocol.Instance.ItemRarity.Unique }, type, first, catalog.Mods, []);
+        Assert.Contains(completed.Mods, m => m.Section == GameServer.Core.Protocol.Instance.ModSection.Implicit && m.Hash == 101);
+        Assert.Contains(completed.Mods, m => m.Section == GameServer.Core.Protocol.Instance.ModSection.Explicit && m.Hash == 102);
+    }
+
+    [Fact]
+    public void CheckDestination_ignores_incomplete_character_saves_table_in_legacy_mode()
+    {
+        string dbPath = CreateLegacyDb(Path.Combine(_root, "legacy-partial-rel.db"));
+        WithDb(dbPath, db => Exec(db, "CREATE TABLE character_saves(id INTEGER PRIMARY KEY) STRICT"));
+        using var session = SaveDatabase.Open(dbPath, write: false);
+        Assert.False(session.Layout.RelationalSaves);
+        SaveDatabase.CheckDestination(session.Connection, session.Layout, _accountId, "FreshWitch", dbPath, _data);
+    }
 }

@@ -99,7 +99,7 @@ static class SaveDatabase
                 : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (authCols.Count == 0)
             {
-                string source = databasePath ?? connection.DataSource;
+                string source = databasePath ?? PathFromDataSource(connection.DataSource);
                 if (string.IsNullOrWhiteSpace(source))
                     throw Incompatible("missing table 'accounts'.");
                 authPath = ResolveAuthPath(source);
@@ -160,19 +160,22 @@ static class SaveDatabase
 
         string? envChars = Environment.GetEnvironmentVariable("Game_CHARACTERS_DB");
         string? envAuth = Environment.GetEnvironmentVariable("Game_AUTH_DB");
-        if (!string.IsNullOrWhiteSpace(envAuth) && !string.IsNullOrWhiteSpace(envChars)
-            && Path.IsPathFullyQualified(envChars)
-            && string.Equals(Path.GetFullPath(envChars), full, StringComparison.OrdinalIgnoreCase))
-        {
-            AddCandidate(ResolveEnvAuthCandidate(envAuth, folder));
-        }
+        bool hasEnvChars = !string.IsNullOrWhiteSpace(envChars);
+        bool matchesEnvChars = hasEnvChars
+            && ResolveEnvPath(envChars!, folder) is { } resolvedEnvChars
+            && string.Equals(Path.GetFullPath(resolvedEnvChars), full, StringComparison.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(envAuth) && matchesEnvChars)
+            AddCandidate(ResolveEnvPath(envAuth, folder));
 
         AddCandidate(AuthPathFor(full));
         if (!stem.Equals("characters", StringComparison.OrdinalIgnoreCase))
             AddCandidate(Path.Combine(folder, "auth.db"));
 
-        if (!string.IsNullOrWhiteSpace(envAuth))
-            AddCandidate(ResolveEnvAuthCandidate(envAuth, folder));
+        // Match LocalExile's SaveDatabase rule: Game_AUTH_DB only applies to the configured Game_CHARACTERS_DB
+        // or the default characters.db, never to a different server's database or a renamed copy.
+        if (!string.IsNullOrWhiteSpace(envAuth) && !hasEnvChars && stem.Equals("characters", StringComparison.OrdinalIgnoreCase))
+            AddCandidate(ResolveEnvPath(envAuth, folder));
 
         foreach (string candidate in candidates)
         {
@@ -185,17 +188,29 @@ static class SaveDatabase
         throw Incompatible($"table 'accounts' is not in this database and no companion auth database was found (checked: {string.Join(", ", candidates)}; or set Game_AUTH_DB).");
     }
 
-    static string? ResolveEnvAuthCandidate(string envAuth, string folder)
+    static string ResolveEnvPath(string envPath, string folder)
     {
-        if (Path.IsPathFullyQualified(envAuth)) return envAuth;
-        string inFolder = Path.Combine(folder, envAuth);
+        if (Path.IsPathFullyQualified(envPath)) return envPath;
+        string inFolder = Path.Combine(folder, envPath);
         if (File.Exists(inFolder)) return inFolder;
         if (Path.GetDirectoryName(folder) is { Length: > 0 } parent)
         {
-            string inParent = Path.Combine(parent, envAuth);
+            string inParent = Path.Combine(parent, envPath);
             if (File.Exists(inParent)) return inParent;
         }
         return inFolder;
+    }
+
+    internal static string PathFromDataSource(string? dataSource)
+    {
+        if (string.IsNullOrWhiteSpace(dataSource)) return "";
+        if (!dataSource.StartsWith("file:", StringComparison.OrdinalIgnoreCase)) return dataSource;
+        int query = dataSource.IndexOf('?');
+        string body = query >= 0 ? dataSource[..query] : dataSource;
+        string path = body.StartsWith("file://", StringComparison.OrdinalIgnoreCase) ? body[7..] : body[5..];
+        if (path.Length >= 3 && path[0] == '/' && char.IsAsciiLetter(path[1]) && path[2] == ':')
+            path = path[1..];
+        return Uri.UnescapeDataString(path);
     }
 
     internal static string ToFileUri(string path, bool readOnly = false) =>
@@ -378,9 +393,15 @@ static class SaveDatabase
     {
         if (Convert.ToInt32(Scalar(connection, "SELECT count(*) FROM account_characters WHERE account_id = $value", accountId, transaction)) >= 24)
             throw new ArgumentException("This account has reached the 24-character limit.");
+        bool checkCharacterSaves = layout.RelationalSaves;
+        if (!checkCharacterSaves)
+        {
+            var saveCols = TableColumns(connection, "main", "character_saves");
+            checkCharacterSaves = saveCols.Contains("name") && saveCols.Contains("deleted_utc");
+        }
         string collisionSql = layout.RelationalSaves
             ? "SELECT 1 FROM account_characters WHERE name = $value COLLATE NOCASE UNION ALL SELECT 1 FROM character_saves WHERE name = $value COLLATE NOCASE AND deleted_utc IS NULL LIMIT 1"
-            : TableColumns(connection, "main", "character_saves").Count > 0
+            : checkCharacterSaves
                 ? "SELECT 1 FROM account_characters WHERE name = $value COLLATE NOCASE UNION ALL SELECT 1 FROM characters WHERE name = $value COLLATE NOCASE UNION ALL SELECT 1 FROM character_saves WHERE name = $value COLLATE NOCASE AND deleted_utc IS NULL LIMIT 1"
                 : "SELECT 1 FROM account_characters WHERE name = $value COLLATE NOCASE UNION ALL SELECT 1 FROM characters WHERE name = $value COLLATE NOCASE LIMIT 1";
         if (Scalar(connection, collisionSql, name, transaction) is not null)
@@ -687,89 +708,182 @@ static class SaveDatabase
         return itemId;
     }
 
-    public static ItemSend.UniqueDefinition? FindUniqueDefinition(SqliteConnection connection, string? database, string? data, string title, string baseTypeId)
+    public sealed class UniqueCatalog : IDisposable
     {
-        const string foulborn = "Foulborn ";
-        string uniqueName = title.StartsWith(foulborn, StringComparison.Ordinal) ? title[foulborn.Length..] : title;
-        if (ReadCatalogEntry(connection, uniqueName, baseTypeId) is { } fromMain) return fromMain;
+        sealed record WorldSource(SqliteConnection Connection, bool HasRelational, bool HasOwnImplicits, bool HasCatalog);
 
-        foreach (string worldPath in WorldDatabaseCandidates(database, data))
+        readonly SqliteConnection _main;
+        readonly string? _database;
+        readonly string? _data;
+        bool _initialized;
+        bool _mainHasCatalog;
+        List<WorldSource>? _worlds;
+
+        internal UniqueCatalog(SqliteConnection main, string? database, string? data)
         {
-            if (!File.Exists(worldPath)) continue;
-            try
+            _main = main;
+            _database = database;
+            _data = data;
+        }
+
+        void EnsureInitialized()
+        {
+            if (_initialized) return;
+            _initialized = true;
+            _mainHasCatalog = HasTable(_main, "catalog_entries");
+            _worlds = [];
+            foreach (string worldPath in WorldDatabaseCandidates(_database, _data))
             {
-                using var world = ExportCommand.Open(ExportCommand.ExistingLocalFile(worldPath), write: false);
-                if (ReadRelationalUnique(world, uniqueName, baseTypeId) is { } relational) return relational;
-                if (ReadCatalogEntry(world, uniqueName, baseTypeId) is { } catalog) return catalog;
-            }
-            catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedAccessException or SqliteException or JsonException)
-            {
-                // World catalogue lookup is optional; if unavailable, fall back to PoB-parsed modifiers.
+                if (!File.Exists(worldPath)) continue;
+                try
+                {
+                    var world = ExportCommand.Open(ExportCommand.ExistingLocalFile(worldPath), write: false);
+                    try
+                    {
+                        var itemCols = TableColumns(world, "main", "unique_items");
+                        var modCols = TableColumns(world, "main", "unique_item_mods");
+                        bool hasRelational = itemCols.Contains("name") && itemCols.Contains("base_type") && itemCols.Contains("item_level")
+                            && itemCols.Contains("corrupted") && itemCols.Contains("enabled")
+                            && modCols.Contains("name") && modCols.Contains("base_type") && modCols.Contains("implicit")
+                            && modCols.Contains("ord") && modCols.Contains("mod");
+                        bool hasCatalog = HasTable(world, "catalog_entries");
+                        if (!hasRelational && !hasCatalog)
+                        {
+                            world.Dispose();
+                            continue;
+                        }
+                        _worlds.Add(new(world, hasRelational, itemCols.Contains("own_implicits"), hasCatalog));
+                    }
+                    catch
+                    {
+                        world.Dispose();
+                        throw;
+                    }
+                }
+                catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedAccessException or SqliteException)
+                {
+                    // World catalogue lookup is optional; if unavailable, fall back to PoB-parsed modifiers.
+                }
             }
         }
-        return null;
+
+        public ItemSend.UniqueDefinition? Find(string title, string baseTypeId)
+        {
+            EnsureInitialized();
+            const string foulborn = "Foulborn ";
+            string uniqueName = title.StartsWith(foulborn, StringComparison.Ordinal) ? title[foulborn.Length..] : title;
+            if (_mainHasCatalog && ReadCatalogEntry(_main, uniqueName, baseTypeId) is { } fromMain)
+                return fromMain;
+
+            foreach (var world in _worlds!)
+            {
+                try
+                {
+                    if (world.HasRelational && ReadRelationalUnique(world.Connection, world.HasOwnImplicits, uniqueName, baseTypeId) is { } relational)
+                        return relational;
+                    if (world.HasCatalog && ReadCatalogEntry(world.Connection, uniqueName, baseTypeId) is { } catalog)
+                        return catalog;
+                }
+                catch (Exception e) when (e is SqliteException or JsonException or OverflowException)
+                {
+                    // World catalogue lookup is optional; if unavailable, fall back to PoB-parsed modifiers.
+                }
+            }
+            return null;
+        }
+
+        public void Dispose()
+        {
+            if (_worlds is null) return;
+            foreach (var world in _worlds) world.Connection.Dispose();
+            _worlds.Clear();
+        }
+    }
+
+    public static UniqueCatalog OpenUniqueCatalog(SqliteConnection connection, string? database, string? data) =>
+        new(connection, database, data);
+
+    public static ItemSend.UniqueDefinition? FindUniqueDefinition(SqliteConnection connection, string? database, string? data, string title, string baseTypeId)
+    {
+        using var catalog = OpenUniqueCatalog(connection, database, data);
+        return catalog.Find(title, baseTypeId);
     }
 
     static IEnumerable<string> WorldDatabaseCandidates(string? database, string? data)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (Environment.GetEnvironmentVariable("Game_WORLD_DB") is { Length: > 0 } envWorld && Path.IsPathFullyQualified(envWorld) && seen.Add(envWorld))
-            yield return envWorld;
-        if (!string.IsNullOrWhiteSpace(database) && Path.GetDirectoryName(database) is { Length: > 0 } dbFolder)
+        string? dbFolder = !string.IsNullOrWhiteSpace(database) ? Path.GetDirectoryName(Path.GetFullPath(database)) : null;
+        string? baseFolder = dbFolder ?? (!string.IsNullOrWhiteSpace(data) ? Path.GetFullPath(data) : null);
+        if (Environment.GetEnvironmentVariable("Game_WORLD_DB") is { Length: > 0 } envWorld)
+        {
+            string? resolved = Path.IsPathFullyQualified(envWorld)
+                ? envWorld
+                : baseFolder is not null ? ResolveEnvPath(envWorld, baseFolder) : null;
+            if (!string.IsNullOrWhiteSpace(resolved) && seen.Add(resolved))
+                yield return resolved;
+        }
+        if (dbFolder is { Length: > 0 })
         {
             string beside = Path.Combine(dbFolder, "world.db");
             if (seen.Add(beside)) yield return beside;
         }
         if (!string.IsNullOrWhiteSpace(data))
         {
-            string inData = Path.Combine(data, "world.db");
+            string inData = Path.Combine(Path.GetFullPath(data), "world.db");
             if (seen.Add(inData)) yield return inData;
         }
+    }
+
+    static bool HasTable(SqliteConnection connection, string table)
+    {
+        using var c = connection.CreateCommand();
+        c.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $name";
+        c.Parameters.AddWithValue("$name", table);
+        return c.ExecuteScalar() is not null;
     }
 
     static ItemSend.UniqueDefinition? ReadCatalogEntry(SqliteConnection connection, string uniqueName, string baseTypeId)
     {
         using var c = connection.CreateCommand();
-        c.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'catalog_entries'";
-        if (c.ExecuteScalar() is null) return null;
         c.CommandText = "SELECT payload FROM catalog_entries WHERE kind = 'unique_item' AND key = $key AND enabled = 1";
         c.Parameters.AddWithValue("$key", $"{uniqueName}|{baseTypeId}");
         return c.ExecuteScalar() is string payload ? JsonSerializer.Deserialize<ItemSend.UniqueDefinition>(payload) : null;
     }
 
-    static ItemSend.UniqueDefinition? ReadRelationalUnique(SqliteConnection world, string uniqueName, string baseTypeId)
+    static ItemSend.UniqueDefinition? ReadRelationalUnique(SqliteConnection world, bool hasOwnImplicits, string uniqueName, string baseTypeId)
     {
-        var itemCols = TableColumns(world, "main", "unique_items");
-        var modCols = TableColumns(world, "main", "unique_item_mods");
-        if (!itemCols.Contains("name") || !itemCols.Contains("base_type") || !itemCols.Contains("item_level")
-            || !itemCols.Contains("corrupted") || !itemCols.Contains("enabled")
-            || !modCols.Contains("name") || !modCols.Contains("base_type") || !modCols.Contains("implicit")
-            || !modCols.Contains("ord") || !modCols.Contains("mod"))
-            return null;
-
         byte itemLevel;
         bool corrupted;
+        bool ownImplicits;
         using (var c = world.CreateCommand())
         {
-            c.CommandText = "SELECT item_level, corrupted FROM unique_items WHERE name = $name AND base_type = $base AND enabled = 1";
+            c.CommandText = hasOwnImplicits
+                ? "SELECT item_level, corrupted, own_implicits FROM unique_items WHERE name = $name AND base_type = $base AND enabled = 1"
+                : "SELECT item_level, corrupted, 0 FROM unique_items WHERE name = $name AND base_type = $base AND enabled = 1";
             c.Parameters.AddWithValue("$name", uniqueName);
             c.Parameters.AddWithValue("$base", baseTypeId);
             using var r = c.ExecuteReader();
             if (!r.Read()) return null;
             itemLevel = checked((byte)r.GetInt64(0));
             corrupted = r.GetInt64(1) != 0;
+            ownImplicits = r.GetInt64(2) != 0;
         }
 
         var mods = new List<string>();
+        var implicits = ownImplicits ? new List<string>() : null;
         using (var c = world.CreateCommand())
         {
-            c.CommandText = "SELECT mod FROM unique_item_mods WHERE name = $name AND base_type = $base AND implicit = 0 ORDER BY ord";
+            c.CommandText = "SELECT implicit, mod FROM unique_item_mods WHERE name = $name AND base_type = $base ORDER BY implicit, ord";
             c.Parameters.AddWithValue("$name", uniqueName);
             c.Parameters.AddWithValue("$base", baseTypeId);
             using var r = c.ExecuteReader();
-            while (r.Read()) mods.Add(r.GetString(0));
+            while (r.Read())
+            {
+                if (r.GetInt64(0) == 0) mods.Add(r.GetString(1));
+                else implicits?.Add(r.GetString(1));
+            }
         }
-        return new ItemSend.UniqueDefinition(uniqueName, baseTypeId, mods.ToArray(), itemLevel, corrupted);
+        return new ItemSend.UniqueDefinition(uniqueName, baseTypeId, mods.ToArray(), itemLevel, corrupted, implicits?.ToArray());
     }
 
     static List<PlacedItem> ParseLegacyPlacements(string save)

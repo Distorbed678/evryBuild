@@ -89,14 +89,14 @@ static class ItemSend
         catch (PathOfBuildingUnsupportedException e) { throw new ArgumentException($"This item cannot be sent: {e.Message}."); }
     }
 
-    internal sealed record UniqueDefinition(string Name, string BaseTypeId, string[] Mods, byte ItemLevel = 86, bool Corrupted = false);
+    internal sealed record UniqueDefinition(string Name, string BaseTypeId, string[] Mods, byte ItemLevel = 86, bool Corrupted = false, string[]? Implicits = null);
 
     // The server's catalogue row: PoB's text cannot name most unique modifiers, this row does. Older databases have no such table.
     internal static UniqueDefinition? Definition(SqliteConnection connection, string title, ItemCatalog.BaseType type, Item item,
-        string? database = null, string? data = null)
+        string? database = null, string? data = null, SaveDatabase.UniqueCatalog? uniques = null)
     {
         if (item.Rarity != ItemRarity.Unique || item.FracturedCount > 0) return null;
-        return SaveDatabase.FindUniqueDefinition(connection, database, data, title, type.Id);
+        return uniques is not null ? uniques.Find(title, type.Id) : SaveDatabase.FindUniqueDefinition(connection, database, data, title, type.Id);
     }
 
     /// <summary>The unique with its catalogue modifiers: PoB's roll where its text matched the same stats, else the top of
@@ -113,7 +113,8 @@ static class ItemSend
             var values = mods.ByHash(match.Hash)!.Stats.Select((s, i) => (s.Id, Value: match.Values[i])).ToDictionary(s => s.Id, s => s.Value);
             return new(section, mod.Hash, [.. mod.Stats.Select(s => values[s.Id])]);
         }
-        var implicits = (type.Implicits ?? []).Select(m => Resolve(m, ModSection.Implicit)).ToList();
+        var implicits = (unique.Implicits is not null ? unique.Implicits.Select(mods.ById).OfType<ModCatalog.Mod>() : type.Implicits ?? [])
+            .Select(m => Resolve(m, ModSection.Implicit)).ToList();
         var explicits = unique.Mods.Select(mods.ById).OfType<ModCatalog.Mod>().Select(m => Resolve(m, ModSection.Explicit)).ToList();
         warnings.RemoveAll(w => w.StartsWith("Skipped modifier", StringComparison.Ordinal));
         if (filled > 0) warnings.Add($"{filled} modifier(s) use the top of their roll from the server's unique catalogue; PoB's text could not identify them.");
