@@ -13,7 +13,11 @@
 -- application file with the SHA-256 of the bytes its source serves, so nothing is applied unless all of it arrived
 -- intact. A copy built from source has no Update element and never checks.
 --
-local mode, connectionProtocol = ...
+-- The Linux AppImage runs from a read-only mount (packageKind "appimage"): "check" saves nothing and also returns the
+-- release notes, and "download" refuses, because the new release is a new AppImage the user downloads.
+--
+local mode, connectionProtocol, packageKind = ...
+local readOnly = packageKind == "appimage"
 
 local xml = require("xml")
 local sha2 = require("sha2")
@@ -266,7 +270,9 @@ local function plan(remote)
 	return changed, removed, bytes
 end
 
-MakeDir(scriptPath .. "/Update")
+if not readOnly then
+	MakeDir(scriptPath .. "/Update")
+end
 local pendingPath = scriptPath .. "/Update/pending.xml"
 
 if mode == "check" then
@@ -281,8 +287,13 @@ if mode == "check" then
 	local ok, invalid = validRemote(remote)
 	if not ok then return nil, invalid end
 	if not newerRelease(remote.version.release, installedRelease) then
-		os.remove(pendingPath)
+		if not readOnly then os.remove(pendingPath) end
 		return "none", installedRelease
+	end
+	if readOnly then
+		-- Nothing is downloaded, so there is no plan: just the release, its notes and its tag.
+		ConPrintf("Update %s available: download the new AppImage", remote.version.release)
+		return "available", remote.version.release, 0, 0, remote.notes, remote.version.tag
 	end
 	local changed, removed, bytes = plan(remote)
 	local saved, writeErr = writeFile(pendingPath, text)
@@ -292,6 +303,9 @@ if mode == "check" then
 end
 
 if mode == "download" then
+	if readOnly then
+		return nil, "This AppImage cannot update itself. Download the new evryBuild AppImage from the release and replace this one."
+	end
 	local text = readFile(pendingPath)
 	local parsed = text and xml.ParseXML(text)
 	local remote = parseManifest(parsed and parsed[1])

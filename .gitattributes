@@ -67,3 +67,9 @@
 # (https://git-scm.com/docs/gitattributes#_executable)
 ###############################################################################
 runtime/*.exe binary
+###############################################################################
+# Linux AppImage files run on Linux: keep LF line endings in every checkout.
+###############################################################################
+scripts/appimage/AppRun text eol=lf
+scripts/appimage/*.desktop text eol=lf
+scripts/appimage/*.png binary

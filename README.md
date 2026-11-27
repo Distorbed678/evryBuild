@@ -53,7 +53,37 @@ Choose a new destination. Packaging checks the exporter executable and source ha
 so stale helper builds cannot be included accidentally. Compiled output is ignored by Git.
 The previously published API-based portable is an older design; it does not contain this external exporter.
 Use a package built from this external implementation for an unmodified LocalExile server.
-See [local packaging and ZIP instructions](RELEASE.md) in the source repository.
+See [local packaging and ZIP instructions](RELEASE.md) in the source repository; it also covers building the
+Linux AppImage with `scripts/package-appimage.py`.
+
+## Linux AppImage
+
+Download **evryBuild-x86_64.AppImage** from the [latest release](https://github.com/LocalExile/evryBuild/releases/latest),
+make it executable and run it:
+
+```bash
+chmod +x evryBuild-x86_64.AppImage
+./evryBuild-x86_64.AppImage
+```
+
+It contains the same application as the Windows ZIP plus Wine 11.0, which runs it; you do not need Wine, .NET or
+anything else installed. It needs an x86_64 desktop (X11, or Wayland with XWayland) with OpenGL, and FUSE to mount the
+image. Without FUSE, run it with `--appimage-extract-and-run`.
+
+The AppImage itself is read-only, so everything you change lives outside it:
+
+| What | Where |
+|---|---|
+| Builds, settings and `LocalExile.json` | `~/Documents/evryBuild`: Wine's Documents folder is your own. Without a `~/Documents` folder, it is `drive_c/users/<you>/Documents/evryBuild` in the prefix |
+| Wine prefix | `~/.local/share/evryBuild/appimage-prefix`, or `$EVRYBUILD_WINEPREFIX` |
+
+The first start creates the Wine prefix, which takes a little longer. Linux paths appear under drive `Z:` in the file
+pickers: your `characters.db` (or legacy `saves.db`) in `/home/you/LocalExile/data` is `Z:\home\you\LocalExile\data\characters.db`. You can also
+paste the Linux path into the database or data folder field. Under Wine, **Send to LocalExile** cannot tell whether
+you are in game or the Gateway still holds the character: log out and restart the Gateway before you send
+([details](docs/LocalExile.md#send-an-item-to-a-character)).
+The AppImage cannot update itself: when a newer release is out, **Update Available** shows its notes and copies the
+download link, and you replace the AppImage file with the new one.
 
 ## Development checks
 
@@ -80,4 +110,6 @@ This fork is based on Path of Building Community Fork master 2.67.2, commit
 building on Openarl's Path of Building and the work of its community contributors.
 These names identify the upstream authors and provenance, not this application's branding.
 [LICENSE.md](LICENSE.md) contains the MIT license and third-party notices.
+The Linux AppImage also contains Wine, under the GNU LGPL 2.1 or later; see
+[its notice](scripts/appimage/notices/NOTICE-Wine.md) for the licence and the source code.
 Historical upstream changes remain in [changelog.txt](changelog.txt).

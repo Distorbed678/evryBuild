@@ -242,6 +242,27 @@ class IntegrationTests(unittest.TestCase):
             assert(not c.create.enabled() and c.results.buf:find('Character created: NewName',1,true))
         ''')
 
+    def test_appimage_passes_pasted_linux_paths_as_wine_drive_z(self):
+        self.lua.run('''
+            local json=require('dkjson')
+            local function sent(database, dataFolder)
+                M.Request({operation='inspect',database=database,dataFolder=dataFolder}, function() end)
+                return json.decode(workers[#workers].args[3])
+            end
+            local plain=sent('/home/me/LocalExile/data/saves.db','/home/me/LocalExile/data')
+            assert(plain.database=='/home/me/LocalExile/data/saves.db', 'only the AppImage maps Linux paths')
+            launch.appImage='/home/me/evryBuild-x86_64.AppImage'
+            local original={operation='inspect',database='/home/me/LocalExile/data/characters.db',dataFolder='/home/me/LocalExile/data'}
+            M.Request(original, function() end)
+            local mapped=json.decode(workers[#workers].args[3])
+            assert(mapped.database=='Z:\\\\home\\\\me\\\\LocalExile\\\\data\\\\characters.db', mapped.database)
+            assert(mapped.dataFolder=='Z:\\\\home\\\\me\\\\LocalExile\\\\data', mapped.dataFolder)
+            assert(original.database=='/home/me/LocalExile/data/characters.db', 'caller payload is not mutated')
+            local windows=sent('C:/server/data/saves.db','')
+            assert(windows.database=='C:/server/data/saves.db' and windows.dataFolder=='')
+            launch.appImage=nil
+        ''')
+
     def open_item_dialog(self):
         self.lua.run('''
             itemTab = {displayItem = {BuildRaw=function() return 'Rarity: NORMAL\\nIron Ring' end}}

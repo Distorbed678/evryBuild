@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -18,6 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 EXE = ROOT / 'runtime/LocalExile/evryBuild.Export.exe'
 DATA = None
 BUILD = None
+# Elsewhere the Windows exporter runs under Wine, as in the Linux AppImage, and sees this machine's files on drive Z:.
+WINE = None if os.name == 'nt' else os.environ.get('EVRYBUILD_TEST_WINE') or shutil.which('wine')
+PATH_FIELDS = ('database', 'dataFolder', 'backup', 'compatibilityReport')
 XML = '<PathOfBuilding><Build level="20" className="Witch"/><Tree activeSpec="1"><Spec nodes="" classId="3" ascendClassId="0" treeVersion="3_29"/></Tree></PathOfBuilding>'
 
 
@@ -29,6 +33,34 @@ def connect(path):
             yield connection
     finally:
         connection.close()
+
+
+def exporter_path(path):
+    """A local path as the exporter sees it: unchanged on Windows, Z:\\... under Wine."""
+    if os.name == 'nt' or not path.startswith('/'): return path
+    return str(PureWindowsPath('Z:\\', *Path(path).parts[1:]))
+
+
+def local_path(path):
+    """A Z:\\ path from the exporter as a path on this machine."""
+    if os.name == 'nt' or not isinstance(path, str) or not path[:3].upper() == 'Z:\\': return path
+    return str(Path('/', *PureWindowsPath(path).parts[1:]))
+
+
+def run_exporter(payload, env=None):
+    """Sends one request to the exporter and returns the reply, its exit code and its stderr."""
+    if os.name != 'nt':
+        if not WINE: raise unittest.SkipTest('The Windows exporter needs Wine here (set EVRYBUILD_TEST_WINE or put wine on PATH).')
+        payload = {k: exporter_path(v) if k in PATH_FIELDS and isinstance(v, str) else v for k, v in payload.items()}
+        env = dict(os.environ if env is None else env, WINEDEBUG='-all')
+        env.setdefault('WINEDLLOVERRIDES', 'mscoree,mshtml=;winemenubuilder.exe=d')
+    command = [str(EXE)] if os.name == 'nt' else [WINE, str(EXE)]
+    result = subprocess.run(command, input=json.dumps(payload), capture_output=True, text=True, encoding='utf-8',
+                            timeout=45 if os.name == 'nt' else 90, env=env)  # Wine starts more slowly
+    reply = json.loads(result.stdout)
+    for key in PATH_FIELDS:
+        if key in reply: reply[key] = local_path(reply[key])
+    return reply, result.returncode, result.stderr
 
 
 RING = 'Rarity: NORMAL\nIron Ring'
@@ -60,9 +92,8 @@ class ExportBase(unittest.TestCase):
     def request(self, operation='preview', **values):
         payload=dict(operation=operation,database=str(self.database),account='alice',name='ExternalWitch',league='Standard',code=XML)
         payload.update(values)
-        result=subprocess.run([str(EXE)],input=json.dumps(payload),capture_output=True,text=True,encoding='utf-8',timeout=45)
-        reply=json.loads(result.stdout)
-        self.assertEqual(0 if reply['ok'] else 1,result.returncode,result.stderr)
+        reply,code,stderr=run_exporter(payload)
+        self.assertEqual(0 if reply['ok'] else 1,code,stderr)
         return reply
 
     def state(self):
@@ -206,8 +237,7 @@ class ItemSendTests(ExportBase):
 
     def send(self, operation='item-preview', item=RING, **values):
         payload=dict(operation=operation,database=str(self.database),account='alice',name='Witch',item=item); payload.update(values)
-        result=subprocess.run([str(EXE)],input=json.dumps(payload),capture_output=True,text=True,encoding='utf-8',timeout=45,env=self.gateway_env)
-        return json.loads(result.stdout)
+        return run_exporter(payload,self.gateway_env)[0]
 
     def saved(self, name='Witch'):
         with connect(self.database) as db:
@@ -216,6 +246,10 @@ class ItemSendTests(ExportBase):
     @contextmanager
     def gateway(self, connected=False):
         """Listens on the private port as a Gateway would. This Python process's start time stands in for the Gateway's."""
+        if os.name != 'nt':
+            # Known limitation, not a test problem: Wine's GetExtendedTcpTable lists no Linux connections, so under Wine
+            # the exporter cannot see a Gateway (docs/LocalExile.md, "Send an item to a character").
+            self.skipTest('Under Wine the exporter cannot see a Linux Gateway in the TCP table.')
         with socket.socket() as listener:
             listener.bind(('127.0.0.1',self.port)); listener.listen()
             if not connected: yield; return

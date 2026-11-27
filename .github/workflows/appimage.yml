@@ -1,0 +1,66 @@
+name: Linux AppImage
+# Builds evryBuild-x86_64.AppImage: on pull requests and pushes to master as a workflow artifact, and for a published
+# evryBuild release (tag evrybuild-v*) also attaches it to that release, next to the Windows ZIP.
+on:
+  pull_request:
+    branches: [ master ]
+  push:
+    branches: [ master ]
+  release:
+    types: [ published ]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    # Upstream PoB's own tags (v1.0.0 to v2.67.2) are not evryBuild releases.
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'evrybuild-v')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build the exporter
+        shell: pwsh
+        run: ./scripts/build-exporter.ps1
+      - name: Check packaging
+        run: python3 -m unittest discover -s scripts -p test_package_evrybuild.py -v
+      - name: Cache the pinned Wine and appimagetool downloads
+        uses: actions/cache@v4
+        with:
+          path: dist/appimage-cache
+          key: appimage-downloads-${{ hashFiles('scripts/package-appimage.py') }}
+      - name: Build the AppImage
+        env:
+          # A release package knows its release, so the planner can say when a newer AppImage is out.
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
+        run: |
+          mkdir -p dist/appimage
+          python3 scripts/package-appimage.py --output dist/appimage/evryBuild-x86_64.AppImage ${RELEASE_TAG:+--release-tag "$RELEASE_TAG"}
+      - name: Upload the AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: evryBuild-x86_64.AppImage
+          path: dist/appimage/
+          if-no-files-found: error
+          retention-days: 14
+  attach:
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download the AppImage built above
+        uses: actions/download-artifact@v4
+        with:
+          name: evryBuild-x86_64.AppImage
+          path: appimage
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" appimage/evryBuild-x86_64.AppImage appimage/evryBuild-x86_64.AppImage.sha256 --clobber --repo "$GITHUB_REPOSITORY"
